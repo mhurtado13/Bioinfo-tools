@@ -9,8 +9,8 @@ score-vs-trait association testing.
 
 | Function | Description |
 | --- | --- |
-| `compute.TFs.activity()` | Infers transcription factor activity from a normalized expression matrix using VIPER, with a TF-target network from CollecTRI, Dorothea, or a user-supplied ARACNE network. |
-| `compute.pathway.activity()` | Computes PROGENy pathway activity scores (MLM), optionally combined with GSVA scores on custom gene sets (e.g. MSigDB Hallmark). |
+| `compute.TFs.activity()` | Infers transcription factor activity from a normalized expression matrix, with a TF-target network from CollecTRI, Dorothea, or a user-supplied ARACNE network, scored by a `decoupleR` statistic (`"consensus"` by default, or a single method such as `"mlm"`/`"viper"`). |
+| `compute.pathway.activity()` | Computes pathway activity scores, from PROGENy (MLM, default) or KEGG/REACTOME/Hallmark (GSVA, via `pathway_source`), optionally combined with GSVA scores on custom gene sets. |
 | `run_deg_analysis()` | Differential expression analysis between two groups with edgeR/limma-voom (filtering, TMM normalization, voom, `topTable`). |
 | `compute.survival.analysis()` | Kaplan-Meier analysis and log-rank testing, either on a predefined clinical grouping column or automatically screened across every column of a feature matrix (High/Low quantile split). |
 | `compute.normalization()` | Normalizes raw counts to log-TPM (`ADImpute::NormalizeTPM`), with optional per-gene z-score scaling. |

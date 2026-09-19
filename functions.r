@@ -8,9 +8,11 @@
 #' - `"ARACNE"` allows user input of a custom network file in a 3-column format: `regulator`, `target`, and `mutual information`.
 #' @param min_targets_size Integer. Minimum number of target genes per regulon required for TF activity inference. Default is 5.
 #' @param universe Optional. A user-specified data frame of TF-target interactions. If not provided, the function will fetch the relevant network based on the `TF.collection` argument.
-#' @param cancer.type Optional character. Cancer type label used when caching the TF collection.
+#' @param statistic Character. Which \code{decoupleR::decouple()} statistic to extract. Default `"consensus"`
+#'   (an ensemble score across the top-performing methods: MLM, ULM, and normalized WSUM). Any single
+#'   underlying method can be requested instead: `"aucell"`, `"udt"`, `"mdt"`, `"wmean"`, `"ulm"`, `"mlm"`,
+#'   `"wsum"`, `"viper"`, `"gsva"`, `"ora"`, or `"fgsea"` (see \code{decoupleR::show_methods()}).
 #' @param cores Integer. Number of cores used by VIPER inference. Default is 4.
-#' @param scale Logical. If TRUE (default), z-score scales the TF activity matrix across samples.
 #' @param return Logical; if TRUE, saves matrix in Results/ folder. Default is TRUE.
 #' @param file.name Optional character suffix used when writing the TF activity matrix to disk.
 #'
@@ -31,28 +33,25 @@
 #' data("counts.norm.tuto")
 #' tfs_activity <- compute.TFs.activity(counts.norm.tuto, cores = 1)
 #'
-compute.TFs.activity <- function(RNA.counts, TF.collection = "CollecTRI", min_targets_size = 5, universe = NULL, cancer.type = NULL, cores = 3, scale = TRUE, return = TRUE, file.name = NULL){
+compute.TFs.activity <- function(RNA.counts, TF.collection = "CollecTRI", min_targets_size = 5, universe = NULL,
+                                 statistic = c("consensus", "aucell", "udt", "mdt", "wmean", "ulm", "mlm", "wsum", "viper", "gsva", "ora", "fgsea"),
+                                 cores = 3, return = TRUE, file.name = NULL){
 
+  statistic <- match.arg(statistic)
   tf_cache_file <- "Results/TF_target_collection.csv"
 
   if(TF.collection == "ARACNE"){
 
-    if(is.null(cancer.type)){
-      # auto-discover when only one network exists
-      candidates <- list.files("input/ARACNE", pattern = "^network\\.txt$",
-                               recursive = TRUE, full.names = TRUE)
-      if(length(candidates) == 0)
-        stop("TF.collection = 'ARACNE' requires a 'cancer.type' or a network.txt under input/ARACNE/")
-      if(length(candidates) > 1)
-        stop("Multiple ARACNe networks found. Specify 'cancer.type' (e.g. cancer.type = 'skcm'):\n",
-             paste(dirname(dirname(candidates)), collapse = "\n"))
-      aracne.network <- candidates[1]
-      cat("Auto-detected ARACNe network:", aracne.network, "\n")
-    } else {
-      aracne.network <- file.path("~/Documents/CellTFusion_paper/input/ARACNE", cancer.type, "network/network.txt")
-      if(!file.exists(aracne.network))
-        stop("ARACNe network not found for cancer type '", cancer.type, "': ", aracne.network)
-    }
+    # auto-discover when only one network exists
+    candidates <- list.files("input/ARACNE", pattern = "^network\\.txt$",
+                             recursive = TRUE, full.names = TRUE)
+    if(length(candidates) == 0)
+      stop("TF.collection = 'ARACNE' requires a network.txt under input/ARACNE/")
+    if(length(candidates) > 1)
+      stop("Multiple ARACNe networks found under input/ARACNE/:\n",
+           paste(dirname(dirname(candidates)), collapse = "\n"))
+    aracne.network <- candidates[1]
+    cat("Auto-detected ARACNe network:", aracne.network, "\n")
 
     cat("Loading ARACNe network from:", aracne.network, "\n")
     # Read network edges, filter to genes present in expression matrix
@@ -82,9 +81,11 @@ compute.TFs.activity <- function(RNA.counts, TF.collection = "CollecTRI", min_ta
                                         network = universe,
                                         .source = "source",
                                         .target = "target",
+                                        statistics = if (statistic == "consensus") NULL else statistic,
+                                        consensus_score = (statistic == "consensus"),
                                         minsize = min_targets_size
                                       ) %>%
-      dplyr::filter(.data$statistic == "consensus") %>%
+      dplyr::filter(.data$statistic == .env$statistic) %>%
       decoupleR::pivot_wider_profile(id_cols     = source,
                                      names_from  = condition,
                                      values_from = score) %>%
@@ -120,8 +121,10 @@ compute.TFs.activity <- function(RNA.counts, TF.collection = "CollecTRI", min_ta
                                        network = universe,
                                       .source = "source",
                                       .target = "target",
+                                      statistics = if (statistic == "consensus") NULL else statistic,
+                                      consensus_score = (statistic == "consensus"),
                                     ) %>%
-                                      dplyr::filter(.data$statistic == "consensus") %>%
+                                      dplyr::filter(.data$statistic == .env$statistic) %>%
                                       decoupleR::pivot_wider_profile(id_cols     = source,
                                                                      names_from  = condition,
                                                                      values_from = score) %>%
@@ -131,7 +134,6 @@ compute.TFs.activity <- function(RNA.counts, TF.collection = "CollecTRI", min_ta
   }
 
   sample_acts <- sample_acts[colnames(RNA.counts), , drop = FALSE]
-  sample_acts <- if (scale) base::scale(sample_acts) else sample_acts ## TO do: scale = TRUE for DEG with t statistic give NA
 
   if(return){
     utils::write.csv(sample_acts, paste0("Results/TF_matrix_", file.name, ".csv"))
@@ -145,20 +147,24 @@ compute.TFs.activity <- function(RNA.counts, TF.collection = "CollecTRI", min_ta
 
 #' Computes TF-modules pathway activities scores
 #'
-#' This function computes pathway activity scores from normalized gene expression data using a multivariate linear model (MLM) based on the PROGENy resource (Schubert et al., 2018).
-#' Optionally, it also performs Gene Set Variation Analysis (GSVA) using hallmark signatures or any user-provided gene sets.
+#' This function computes pathway activity scores from normalized gene expression data.
+#' By default, it uses a multivariate linear model (MLM) based on the PROGENy resource (Schubert et al., 2018).
+#' Alternatively, KEGG, REACTOME, or MSigDB Hallmark of Cancer gene sets can be used instead, scored via
+#' Gene Set Variation Analysis (GSVA). Optionally, it also performs GSVA using any user-provided gene sets.
 #'
 #' @param RNA.tpm A numeric matrix of normalized gene expression values with genes as rows and samples as columns.
 #' @param gene_sets A list of gene sets (e.g., hallmark signatures or user-defined sets). If provided, GSVA scores will be computed for these sets. Default is \code{NULL}.
-#' @param paths A data frame describing the pathway-gene interactions for use with PROGENy. If \code{NULL}, the human PROGENy resource (top 500 genes) will be used by default.
+#' @param paths A data frame describing the pathway-gene interactions for use with PROGENy (ignored for other `pathway_source` values). If \code{NULL}, the human PROGENy resource (top 500 genes) will be used by default.
+#' @param pathway_source Character. The pathway resource used for the primary pathway score. Options are `"PROGENy"` (default, MLM-based),
+#'   `"KEGG"`, `"REACTOME"`, or `"Hallmark"` (all three GSVA-based, using the corresponding MSigDB collection).
 #' @param return Logical; if TRUE, saves matrices in Results/ folder. Default is TRUE.
 #' @param file.name Optional character suffix used when writing output CSV files.
 #'
-#' @return If \code{gene_sets} is \code{NULL}, a scaled matrix of PROGENy pathway activity scores (samples as rows, pathways as columns).
+#' @return If \code{gene_sets} is \code{NULL}, a scaled matrix of pathway activity scores for `pathway_source` (samples as rows, pathways as columns).
 #' If \code{gene_sets} is provided, a list with two elements:
 #' \itemize{
-#'   \item \code{sample_acts_progeny}: A scaled matrix of PROGENy pathway activity scores.
-#'   \item \code{sample_acts_gsva}: A scaled matrix of GSVA scores based on the provided gene sets.
+#'   \item the `pathway_source` matrix (e.g. \code{PROGENy}): A scaled matrix of pathway activity scores.
+#'   \item \code{GSVA}: A scaled matrix of GSVA scores based on the provided gene sets.
 #' }
 #'
 #'
@@ -171,42 +177,81 @@ compute.TFs.activity <- function(RNA.counts, TF.collection = "CollecTRI", min_ta
 #' data("counts.norm.tuto")
 #' pathways <- compute.pathway.activity(counts.norm.tuto)
 #'
-compute.pathway.activity <- function(RNA.tpm, gene_sets = NULL, paths = NULL, return = TRUE, file.name = NULL) {
+#' # Use REACTOME instead of PROGENy
+#' pathways_reactome <- compute.pathway.activity(counts.norm.tuto, pathway_source = "REACTOME")
+#'
+compute.pathway.activity <- function(RNA.tpm, gene_sets = NULL, paths = NULL,
+                                     pathway_source = c("PROGENy", "KEGG", "REACTOME", "Hallmark"),
+                                     return = TRUE, file.name = NULL) {
 
+  pathway_source <- match.arg(pathway_source)
   rn <- rownames(RNA.tpm)
   RNA.tpm <- apply(as.matrix(RNA.tpm), 2, as.numeric)
   rownames(RNA.tpm) <- rn
   results_list <- list()
 
-  ###### PROGENy
-  progeny_cache_file <- "Results/Pathways_collection_PROGENy.csv"
-  if (is.null(paths)) {
-    if (file.exists(progeny_cache_file)) {
-      paths <- utils::read.csv(progeny_cache_file, row.names = 1)
-      cat("Using cached PROGENy pathways collection from ", progeny_cache_file, "\n")
-    } else {
-      paths <- decoupleR::get_progeny(organism = "human", top = 500)
-      utils::write.csv(paths, progeny_cache_file)
+  if (pathway_source == "PROGENy") {
+
+    ###### PROGENy (MLM)
+    progeny_cache_file <- "Results/Pathways_collection_PROGENy.csv"
+    if (is.null(paths)) {
+      if (file.exists(progeny_cache_file)) {
+        paths <- utils::read.csv(progeny_cache_file, row.names = 1)
+        cat("Using cached PROGENy pathways collection from ", progeny_cache_file, "\n")
+      } else {
+        paths <- decoupleR::get_progeny(organism = "human", top = 500)
+        utils::write.csv(paths, progeny_cache_file)
+      }
     }
+
+    progeny <- decoupleR::run_mlm(
+      mat      = RNA.tpm,
+      net      = paths,
+      .source  = "source",
+      .target  = "target",
+      .mor     = "weight",
+      minsize  = 5
+    )
+
+    sample_acts_pathway <- progeny %>%
+      tidyr::pivot_wider(id_cols = "condition", names_from = "source", values_from = "score") %>%
+      tibble::column_to_rownames("condition") %>%
+      as.matrix() %>%
+      scale() %>%
+      as.data.frame()
+
+  } else {
+
+    ###### KEGG / REACTOME / Hallmark (GSVA on the corresponding MSigDB collection)
+    msigdb_cache_file <- paste0("Results/Pathways_collection_", pathway_source, ".csv")
+    if (file.exists(msigdb_cache_file)) {
+      msigdb_sets <- utils::read.csv(msigdb_cache_file)
+      cat("Using cached", pathway_source, "gene set collection from", msigdb_cache_file, "\n")
+    } else {
+      msigdb_cat <- if (pathway_source == "Hallmark") "H" else "C2"
+      msigdb_subcat <- switch(pathway_source, KEGG = "CP:KEGG", REACTOME = "CP:REACTOME", Hallmark = "")
+      msigdb_sets <- msigdbr::msigdbr(species = "Homo sapiens", category = msigdb_cat, subcategory = msigdb_subcat)
+      utils::write.csv(msigdb_sets, msigdb_cache_file, row.names = FALSE)
+    }
+
+    pathway_gene_sets <- split(msigdb_sets$gene_symbol, msigdb_sets$gs_name)
+
+    pathway_gsva <- GSVA::gsva(
+      RNA.tpm,
+      pathway_gene_sets,
+      method  = "gsva",
+      kcdf    = "Gaussian",
+      min.sz  = 1,
+      mx.diff = TRUE,
+      verbose = TRUE
+    )
+
+    sample_acts_pathway <- t(pathway_gsva) %>%
+      scale() %>%
+      as.data.frame()
   }
 
-  progeny <- decoupleR::run_mlm(
-    mat      = RNA.tpm,
-    net      = paths,
-    .source  = "source",
-    .target  = "target",
-    .mor     = "weight",
-    minsize  = 5
-  )
-
-  sample_acts_progeny <- progeny %>%
-    tidyr::pivot_wider(id_cols = "condition", names_from = "source", values_from = "score") %>%
-    tibble::column_to_rownames("condition") %>%
-    as.matrix() %>%
-    scale() %>%
-    as.data.frame()
-
-  results_list$PROGENy <- sample_acts_progeny
+  results_list[[pathway_source]] <- sample_acts_pathway
 
   ###### GSVA (optional)
   if (!is.null(gene_sets)) {
@@ -229,8 +274,8 @@ compute.pathway.activity <- function(RNA.tpm, gene_sets = NULL, paths = NULL, re
 
   ###### Save outputs if requested
   if (return) {
-    if (!is.null(results_list$PROGENy)) {
-      utils::write.csv(results_list$PROGENy, paste0("Results/Pathway_matrix_PROGENy_", file.name, ".csv"))
+    if (!is.null(results_list[[pathway_source]])) {
+      utils::write.csv(results_list[[pathway_source]], paste0("Results/Pathway_matrix_", pathway_source, "_", file.name, ".csv"))
     }
     if (!is.null(results_list$GSVA)) {
       utils::write.csv(results_list$GSVA, paste0("Results/Pathway_matrix_GSVA_", file.name,".csv"))
@@ -271,7 +316,7 @@ compute.pathway.activity <- function(RNA.tpm, gene_sets = NULL, paths = NULL, re
 #'   \code{AveExpr}, \code{t}, \code{P.Value}, \code{adj.P.Val}, and \code{B}.
 #'
 #' @keywords internal
-run_deg_analysis <- function(counts, coldata, group_col, ref_level = NULL) {
+run_deg_analysis <- function(counts, coldata, group_col, ref_level = NULL, pval = 0.05) {
   # Prepare counts
   counts_mat <- as.matrix(counts)
   mode(counts_mat) <- "numeric"
@@ -304,7 +349,7 @@ run_deg_analysis <- function(counts, coldata, group_col, ref_level = NULL) {
   coef_name <- colnames(design)[2]
 
   # Get results
-  res <- limma::topTable(fit, coef = coef_name, p.value = 0.05, number = Inf)
+  res <- limma::topTable(fit, coef = coef_name, p.value = pval, number = Inf)
 
   return(res)
 }

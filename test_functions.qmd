@@ -52,11 +52,21 @@ tfs_dorothea <- compute.TFs.activity(counts.norm, TF.collection = "Dorothea", fi
 head(tfs_dorothea[, 1:5])
 ```
 
-ARACNE network (cancer-type-specific, LUAD):
+ARACNE network. It is auto-discovered from a `network.txt` under `input/ARACNE/`, so a LUAD network built for this cohort is linked in first:
 
 ```{r}
-tfs_aracne <- compute.TFs.activity(counts.norm, TF.collection = "ARACNE", cancer.type = "luad", file.name = "ARACNE")
+dir.create("input/ARACNE/luad/network", recursive = TRUE, showWarnings = FALSE)
+file.symlink("~/Documents/CellTFusion_paper/input/ARACNE/luad/network/network.txt", "input/ARACNE/luad/network/network.txt")
+
+tfs_aracne <- compute.TFs.activity(counts.norm, TF.collection = "ARACNE", file.name = "ARACNE")
 head(tfs_aracne[, 1:5])
+```
+
+A single underlying `decoupleR` method instead of the default `"consensus"` ensemble:
+
+```{r}
+tfs_mlm <- compute.TFs.activity(counts.norm, statistic = "mlm", file.name = "CollecTRI_mlm")
+head(tfs_mlm[, 1:5])
 ```
 
 ## `compute.pathway.activity()`
@@ -78,6 +88,13 @@ gene_sets <- split(hallmark$gene_symbol, hallmark$gs_name)
 pathways_hallmark <- compute.pathway.activity(counts.norm, gene_sets = gene_sets, file.name = "Hallmark")
 head(pathways_hallmark$PROGENy[, 1:5])
 head(pathways_hallmark$GSVA[, 1:5])
+```
+
+`pathway_source` swaps PROGENy for a built-in MSigDB collection (GSVA-based): KEGG, REACTOME, or Hallmark:
+
+```{r}
+pathways_kegg <- compute.pathway.activity(counts.norm, pathway_source = "KEGG", file.name = "KEGG")
+head(pathways_kegg[, 1:5])
 ```
 
 ## `run_deg_analysis()`
