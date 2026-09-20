@@ -1,7 +1,8 @@
 ---
-title: "functions.r — tests on the Vanderbilt cohort (LungPredict1 paper)"
+title: "Test functions"
 format: html
 editor: visual
+author: "Marcelo Hurtado"
 ---
 
 ## Setup
@@ -13,9 +14,7 @@ set.seed(123)
 dir.create("Results", showWarnings = FALSE)
 ```
 
-## Data
-
-Vanderbilt early-detection cohort (raw counts, clinical and survival data) from the LungPredict1 paper.
+## Data example
 
 ```{r}
 counts <- as.matrix(read.csv("~/Documents/MIRACLE/input/raw_files/Vanderbilt/Counts_Vanderbilt_SYMBOL.csv", row.names = 1))
@@ -27,10 +26,11 @@ clinical$PFS <- survival[as.character(clinical$pt_ID), "PFS"]
 clinical$PFS_event <- ifelse(survival[as.character(clinical$pt_ID), "DRP_st"] == "Yes", 1, 0)
 ```
 
-Log2-CPM normalization, used as input for the TF and pathway activity functions.
+Log-TPM normalization via `compute.normalization()` (`zscore = FALSE`, since the TF and pathway activity
+functions expect normalized expression, not per-gene standardized values), used as input for those functions.
 
 ```{r}
-counts.norm <- edgeR::cpm(counts, log = TRUE)
+counts.norm <- as.matrix(compute.normalization(counts, zscore = FALSE))
 ```
 
 ## `compute.TFs.activity()`
@@ -52,13 +52,12 @@ tfs_dorothea <- compute.TFs.activity(counts.norm, TF.collection = "Dorothea", fi
 head(tfs_dorothea[, 1:5])
 ```
 
-ARACNE network. It is auto-discovered from a `network.txt` under `input/ARACNE/`, so a LUAD network built for this cohort is linked in first:
+ARACNE network, from a user-supplied `network.txt` path (a LUAD network built for this cohort):
 
 ```{r}
-dir.create("input/ARACNE/luad/network", recursive = TRUE, showWarnings = FALSE)
-file.symlink("~/Documents/CellTFusion_paper/input/ARACNE/luad/network/network.txt", "input/ARACNE/luad/network/network.txt")
-
-tfs_aracne <- compute.TFs.activity(counts.norm, TF.collection = "ARACNE", file.name = "ARACNE")
+tfs_aracne <- compute.TFs.activity(counts.norm, TF.collection = "ARACNE",
+                                    aracne.network = "~/Documents/ARACNE/luad/network/network.txt",
+                                    file.name = "ARACNE")
 head(tfs_aracne[, 1:5])
 ```
 
@@ -69,43 +68,80 @@ tfs_mlm <- compute.TFs.activity(counts.norm, statistic = "mlm", file.name = "Col
 head(tfs_mlm[, 1:5])
 ```
 
+Every `statistic` option, run on the (cached) CollecTRI network. A small sample subset keeps the slower
+tree-based methods (`udt`, `mdt`) fast; `"gsva"` is skipped since `decoupleR`'s `run_gsva()` is incompatible
+with the installed GSVA \>= 1.50 API:
+
+```{r}
+all_statistics <- c("consensus", "aucell", "udt", "mdt", "wmean", "ulm", "mlm", "wsum", "viper", "ora", "fgsea")
+counts.norm.small <- counts.norm[, 1:15]
+
+for (st in all_statistics) {
+  tfs_st <- compute.TFs.activity(counts.norm.small, statistic = st, file.name = paste0("CollecTRI_", st))
+  cat(st, "-> dim:", dim(tfs_st), "\n")
+}
+```
+
 ## `compute.pathway.activity()`
 
-Computes PROGENy pathway activity scores, optionally combined with GSVA on custom gene sets.
+Computes pathway activity from `pathway_source` (PROGENy by default, or KEGG/REACTOME/Hallmark), scored by
+any `decoupleR` `statistic` -- the same pattern as `compute.TFs.activity()`. `gene_sets`, if provided, is
+scored with that same `statistic` and saved to `Results/`, but the function always returns only the
+`pathway_source` matrix.
 
-PROGENy only:
+PROGENy only (default `pathway_source`/`statistic`):
 
 ```{r}
 pathways_progeny <- compute.pathway.activity(counts.norm, file.name = "PROGENy")
 head(pathways_progeny[, 1:5])
 ```
 
-PROGENy + GSVA (MSigDB Hallmark gene sets):
+PROGENy + custom gene sets (MSigDB Hallmark, scored with the same default `"consensus"` statistic and
+saved to `Results/Pathway_matrix_gene_sets_Hallmark.csv`, but not part of the return value):
 
 ```{r}
 hallmark <- msigdbr::msigdbr(species = "Homo sapiens", category = "H")
 gene_sets <- split(hallmark$gene_symbol, hallmark$gs_name)
 pathways_hallmark <- compute.pathway.activity(counts.norm, gene_sets = gene_sets, file.name = "Hallmark")
-head(pathways_hallmark$PROGENy[, 1:5])
-head(pathways_hallmark$GSVA[, 1:5])
+head(pathways_hallmark[, 1:5])
 ```
 
-`pathway_source` swaps PROGENy for a built-in MSigDB collection (GSVA-based): KEGG, REACTOME, or Hallmark:
+`pathway_source` swaps PROGENy for a built-in MSigDB collection (KEGG, REACTOME, or Hallmark):
 
 ```{r}
 pathways_kegg <- compute.pathway.activity(counts.norm, pathway_source = "KEGG", file.name = "KEGG")
 head(pathways_kegg[, 1:5])
 ```
 
+A single underlying `decoupleR` method instead of the default `"consensus"` ensemble:
+
+```{r}
+pathways_kegg_viper <- compute.pathway.activity(counts.norm, pathway_source = "KEGG", statistic = "viper", file.name = "KEGG_viper")
+head(pathways_kegg_viper[, 1:5])
+```
+
+`"mlm"` (and so the default `"consensus"`) fits all sources jointly, which can fail on large, highly
+redundant collections like REACTOME's 1615 pathways -- a per-source method such as `"ulm"` still works:
+
+```{r}
+tryCatch(
+  compute.pathway.activity(counts.norm, pathway_source = "REACTOME", statistic = "mlm", file.name = "REACTOME_mlm"),
+  error = function(e) cat("Expected error:", conditionMessage(e), "\n")
+)
+pathways_reactome_ulm <- compute.pathway.activity(counts.norm, pathway_source = "REACTOME", statistic = "ulm", file.name = "REACTOME_ulm")
+dim(pathways_reactome_ulm)
+```
+
 ## `run_deg_analysis()`
 
-Differential expression (edgeR/limma-voom) between CANARY radiologic risk classes.
+Differential expression (edgeR/limma-voom) between CANARY radiologic risk classes. A volcano plot (built
+from the full, unfiltered gene set) is saved to `Results/` by default (`plot = TRUE`).
 
 Default factor ordering (Intermediate vs. Poor):
 
 ```{r}
 sub <- clinical$CANARY %in% c("I", "P")
-deg_default <- run_deg_analysis(counts[, sub], clinical[sub, ], group_col = "CANARY")
+deg_default <- run_deg_analysis(counts[, sub], clinical[sub, ], group_col = "CANARY", file.name = "CANARY_IvsP")
 head(deg_default)
 ```
 
@@ -113,8 +149,86 @@ Explicit reference level (Good vs. Intermediate, `ref_level = "I"`):
 
 ```{r}
 sub2 <- clinical$CANARY %in% c("G", "I")
-deg_ref <- run_deg_analysis(counts[, sub2], clinical[sub2, ], group_col = "CANARY", ref_level = "I")
+deg_ref <- run_deg_analysis(counts[, sub2], clinical[sub2, ], group_col = "CANARY", ref_level = "I", file.name = "CANARY_GvsI")
 head(deg_ref)
+```
+
+## `compute.volcano.plot()`
+
+Called automatically by `run_deg_analysis()` above, but also usable standalone on any DEG result. Here on
+the full, unfiltered gene set (`pval = 1`), with a stricter `logFC` cutoff:
+
+```{r}
+deg_full <- run_deg_analysis(counts[, sub2], clinical[sub2, ], group_col = "CANARY", ref_level = "I", pval = 1, plot = FALSE)
+compute.volcano.plot(deg_full, pval = 0.05, logFC = 1.5, title = "CANARY: G vs. I", file.name = "CANARY_GvsI_standalone")
+```
+
+## `compute.enrichment()`
+
+Over-representation (ORA, default `method`) or gene set enrichment (GSEA) against GO (BP/CC/MF), KEGG,
+REACTOME, PROGENy, or Hallmark; a dot plot is saved per call to `Results/`.
+
+ORA on the significant genes from `deg_ref` (CANARY G vs. I), single database:
+
+```{r}
+ora_kegg <- compute.enrichment(rownames(deg_ref), database = "KEGG", universe = rownames(counts[, sub2]), file.name = "KEGG")
+head(ora_kegg@result[, c("Description", "pvalue", "p.adjust")])
+```
+
+Every `database` option for ORA:
+
+```{r}
+databases <- c("GO_BP", "GO_CC", "GO_MF", "KEGG", "REACTOME", "PROGENy", "Hallmark")
+
+for (db in databases) {
+  ora_db <- compute.enrichment(rownames(deg_ref), database = db, universe = rownames(counts[, sub2]), file.name = paste0("ORA_", db))
+  cat(db, "-> n significant terms:", if (is.null(ora_db)) 0 else nrow(ora_db@result), "\n")
+}
+```
+
+`method = "GSEA"` needs a full ranked gene list, not pre-filtered to significant genes
+(`run_deg_analysis(..., pval = 1)`):
+
+```{r}
+deg_full <- run_deg_analysis(counts[, sub2], clinical[sub2, ], group_col = "CANARY", ref_level = "I", pval = 1, plot = FALSE)
+ranks <- setNames(deg_full$t, rownames(deg_full))
+
+gsea_hallmark <- compute.enrichment(ranks, database = "Hallmark", method = "GSEA", file.name = "Hallmark")
+head(gsea_hallmark@result[, c("Description", "NES", "p.adjust")])
+```
+
+Every `database` option for GSEA (REACTOME is the slow one here: ~1615 pathways against the full ranked list):
+
+```{r}
+for (db in databases) {
+  gsea_db <- compute.enrichment(ranks, database = db, method = "GSEA", file.name = paste0("GSEA_", db))
+  cat(db, "-> n significant terms:", if (is.null(gsea_db)) 0 else nrow(gsea_db@result), "\n")
+}
+```
+
+## `compute.TFs.activity.DEG()`
+
+TF activity computed directly from a per-gene DEG ranking statistic (a named vector the caller builds
+and chooses -- the `t` statistic is recommended) instead of per-sample expression, with an empirical
+p-value from gene-label permutations in addition to the score. Default `statistic` is `"consensus"`,
+same as `compute.TFs.activity()`:
+
+```{r}
+signature <- setNames(deg_full$t, rownames(deg_full))
+tf_deg <- compute.TFs.activity.DEG(signature, n_perm = 200, file.name = "CANARY_GvsI")
+head(tf_deg$activity)
+tf_deg$plot
+```
+
+`TF.collection = "ARACNE"` needs the full normalized expression matrix (`RNA.counts`) to derive each
+edge's mode of regulation via cross-sample correlation, since that can't come from the single-column
+signature being scored:
+
+```{r}
+tf_deg_aracne <- compute.TFs.activity.DEG(signature, TF.collection = "ARACNE",
+                                          aracne.network = "~/Documents/ARACNE/luad/network/network.txt",
+                                          RNA.counts = counts.norm, statistic = "ulm", n_perm = 200, file.name = "ARACNE")
+head(tf_deg_aracne$activity)
 ```
 
 ## `compute.survival.analysis()`
@@ -135,7 +249,7 @@ Automatic screening across a feature matrix (`features`), High/Low split per PRO
 ```{r}
 clin_feat <- clinical[rownames(pathways_progeny), ]
 km_features <- compute.survival.analysis(clin_feat, PFS = "PFS", PFS_event = "PFS_event",
-                                          features = pathways_progeny, p.value = 0.1, file_name = "PROGENy")
+                                          features = pathways_progeny, p.value = 0.15, file_name = "PROGENy")
 names(km_features)
 ```
 
@@ -201,18 +315,15 @@ corr_matrices$pearson$cor[1:3, 1:3]
 
 ## `scores.*.test()` family
 
-Each tests a samples x features score matrix (wrapped in a list, e.g. `list(pathways_progeny)`) against a continuous trait, plotting significant hits to `Results/`.
+Each tests a samples x features score matrix directly against a continuous trait, plotting
+significant hits to `Results/`.
 
 ```{r}
-scores_list <- list(pathways_progeny)
+pearson_sig  <- scores.pearson.test(pathways_progeny, clinical, trait = "BMI", pval = 0.1)
+spearman_sig <- scores.spearman.test(pathways_progeny, clinical, trait = "BMI", pval = 0.1)
+fisher_sig   <- scores.fisher.test.continuous(pathways_progeny, clinical, trait = "BMI", pval = 0.3)
 
-pearson_sig  <- scores.pearson.test(scores_list, clinical, trait = "BMI", pval = 0.1)
-spearman_sig <- scores.spearman.test(scores_list, clinical, trait = "BMI", pval = 0.1)
-kendall_sig  <- scores.kendall.test(scores_list, clinical, trait = "BMI", pval = 0.1)
-lm_sig       <- scores.lm.test(scores_list, clinical, trait = "BMI", pval = 0.1)
-fisher_sig   <- scores.fisher.test.continuous(scores_list, clinical, trait = "BMI", pval = 0.3)
-
-colnames(pearson_sig[[1]])
+colnames(pearson_sig)
 ```
 
 ## `scores.stat.analysis.continuous()`
@@ -220,13 +331,31 @@ colnames(pearson_sig[[1]])
 Unified dispatcher for the `scores.*.test()` family above, selected via `method`.
 
 ```{r}
-wrap_kendall <- scores.stat.analysis.continuous(pathways_progeny, clinical, trait = "BMI", method = "kendall", pval = 0.1)
-colnames(wrap_kendall[[1]])
+wrap_spearman <- scores.stat.analysis.continuous(pathways_progeny, clinical, trait = "BMI", method = "spearman", pval = 0.1)
+colnames(wrap_spearman)
 ```
 
-Also accepts NMF-style output with a `$Z` score matrix (e.g. `compute.latent_factors()`):
+## Categorical `scores.*.test()` family
+
+Each tests a samples x features score matrix against a categorical trait, plotting significant
+hits (boxplot + jitter) to `Results/`. `ttest`/`wilcox` require exactly 2 groups; `anova`/`kruskal`
+accept 2+.
 
 ```{r}
-wrap_nmf <- scores.stat.analysis.continuous(list(Z = pathways_progeny), clinical, trait = "BMI", method = "spearman", pval = 0.1)
-colnames(wrap_nmf[[1]])
+sub <- clinical$CANARY %in% c("I", "P")
+ttest_sig  <- scores.ttest.test(pathways_progeny[sub, ], clinical[sub, ], trait = "CANARY", pval = 0.5)
+wilcox_sig <- scores.wilcox.test(pathways_progeny[sub, ], clinical[sub, ], trait = "CANARY", pval = 0.5)
+anova_sig  <- scores.anova.test(pathways_progeny, clinical, trait = "CANARY", pval = 0.5)
+kruskal_sig <- scores.kruskal.test(pathways_progeny, clinical, trait = "CANARY", pval = 0.5)
+
+colnames(anova_sig)
+```
+
+## `scores.stat.analysis.categorical()`
+
+Unified dispatcher for the categorical `scores.*.test()` family above, selected via `method`.
+
+```{r}
+wrap_kruskal <- scores.stat.analysis.categorical(pathways_progeny, clinical, trait = "CANARY", method = "kruskal", pval = 0.5)
+colnames(wrap_kruskal)
 ```
