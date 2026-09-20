@@ -1,9 +1,35 @@
-# Bioinfo-tools
+# BioinfoTools
 
-Collection of general-purpose R functions for bulk RNA-seq analysis, gathered in a single
-[`functions.r`](functions.r) file and shared across projects. Covers transcription factor
-and pathway activity inference, differential expression, survival analysis, and
-score-vs-trait association testing.
+An R package of general-purpose functions for bulk RNA-seq analysis, shared across
+projects. Covers transcription factor and pathway activity inference, differential
+expression, survival analysis, and score-vs-trait association testing.
+
+## Installation
+
+BioinfoTools is not on CRAN/Bioconductor; install it from source. Most of its
+dependencies are Bioconductor packages, so install those with `BiocManager` first:
+
+```r
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+
+BiocManager::install(c(
+  "ADImpute", "AnnotationDbi", "clusterProfiler", "decoupleR", "dorothea", "edgeR",
+  "EnhancedVolcano", "enrichplot", "org.Hs.eg.db", "ReactomePA", "sva"
+))
+
+install.packages(c(
+  "dplyr", "ggplot2", "ggpubr", "ggstatsplot", "gridExtra", "magrittr", "msigdbr",
+  "survival", "survminer", "tibble", "tidyr", "WGCNA"
+))
+
+# Then, from a local clone of this repository:
+if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
+remotes::install_local("path/to/Bioinfo-tools")
+```
+
+```r
+library(BioinfoTools)
+```
 
 ## Functions
 
@@ -29,18 +55,18 @@ score-vs-trait association testing.
 | `scores.kruskal.test()` | Kruskal-Wallis test between each column of a score matrix and a categorical trait with 2+ groups. |
 | `scores.stat.analysis.categorical()` | Unified dispatcher for the categorical `scores.*.test()` family above, selected via a `method` argument. |
 
-Each function is documented with a roxygen block above its definition in `functions.r`
-(parameters, return value, and usage example), so refer there for full argument details.
+Each function is documented as a standard R help page (`?compute.TFs.activity`, etc.),
+generated via roxygen2 from the source in `R/` (parameters, return value, and usage example).
 
 A ready-to-run example of every function and its documented variations, tested on the
 Vanderbilt lung cancer cohort from the LungPredict1 paper, is in
-[`test_functions.qmd`](test_functions.qmd).
+[`test_functions.qmd`](test_functions.qmd) (uses `library(BioinfoTools)` in place of
+`source("functions.r")`).
 
 ## Usage example
 
 ```r
-library(dplyr)
-source("functions.r")
+library(BioinfoTools)
 dir.create("Results", showWarnings = FALSE)
 
 # raw.counts: genes x samples raw count matrix
@@ -58,8 +84,9 @@ km <- compute.survival.analysis(coldata, PFS = "PFS", PFS_event = "PFS_event",
 
 ## Contributing
 
-New functions are welcome — just add them to `functions.r` documented with the same
-[roxygen2](https://roxygen2.r-lib.org/) style already used throughout the file:
+New functions are welcome — add them to a file in `R/` (a new file, or an existing one if the
+function belongs to an existing group), documented with the same
+[roxygen2](https://roxygen2.r-lib.org/) style already used throughout:
 
 ```r
 #' One-line title
@@ -74,9 +101,17 @@ New functions are welcome — just add them to `functions.r` documented with the
 #' @examples
 #' my_new_function(x)
 #'
+#' @export
+#'
 my_new_function <- function(x, ...) {
   ...
 }
+```
+
+After adding or editing a function, regenerate `NAMESPACE` and the `man/` pages with:
+
+```r
+roxygen2::roxygenise()
 ```
 
 Save outputs (plots, matrices) to a `Results/` folder, following the existing functions'

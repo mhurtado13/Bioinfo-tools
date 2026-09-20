@@ -1,0 +1,11 @@
+^LICENSE\.md$
+^test_functions\.qmd$
+^Results$
+^omnipathr-log$
+^pypath_log$
+^\.vscode$
+^\.claude$
+^\.github$
+^README\.Rmd$
+^\.Rproj\.user$
+^.*\.Rproj$

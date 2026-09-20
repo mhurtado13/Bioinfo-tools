@@ -9,7 +9,7 @@ author: "Marcelo Hurtado"
 
 ```{r setup}
 library(dplyr)
-source("functions.r")
+library(BioinfoTools)
 set.seed(123)
 dir.create("Results", showWarnings = FALSE)
 ```
