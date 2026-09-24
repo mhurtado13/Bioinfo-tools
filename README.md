@@ -22,9 +22,9 @@ install.packages(c(
   "survival", "survminer", "tibble", "tidyr", "WGCNA"
 ))
 
-# Then, from a local clone of this repository:
+# Then install BioinfoTools itself from GitHub:
 if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
-remotes::install_local("path/to/Bioinfo-tools")
+remotes::install_github("mhurtado13/Bioinfo-tools")
 ```
 
 ```r
